@@ -1,0 +1,99 @@
+﻿@import "tailwindcss";
+
+:root {
+  --background: #f6f1e8;
+  --foreground: #1f1a14;
+  --card: rgba(255, 250, 242, 0.9);
+  --muted: #6e6255;
+  --accent: #af8740;
+  --accent-strong: #8e6825;
+  --accent-soft: #f3e4c0;
+  --danger: #b63c30;
+  --success: #2f7d47;
+  --border: #e4d3b1;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-noto-sans-sc);
+  --font-mono: var(--font-jetbrains-mono);
+  --color-card: var(--card);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-danger: var(--danger);
+  --color-success: var(--success);
+  --color-border: var(--border);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: light;
+}
+
+body {
+  min-width: 320px;
+  background:
+    radial-gradient(circle at top left, rgba(255, 244, 215, 0.9), transparent 32%),
+    radial-gradient(circle at bottom right, rgba(191, 154, 83, 0.18), transparent 28%),
+    linear-gradient(180deg, #fbf7ef 0%, #f4ecdf 100%);
+  color: var(--foreground);
+  font-family: var(--font-noto-sans-sc), "Microsoft YaHei", sans-serif;
+}
+
+a {
+  color: inherit;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+input,
+select,
+textarea {
+  min-width: 0;
+}
+
+::selection {
+  background: rgba(175, 135, 64, 0.18);
+}
+
+.page-shell {
+  min-height: 100vh;
+  background:
+    linear-gradient(140deg, rgba(255, 255, 255, 0.58), rgba(255, 244, 224, 0.22)),
+    repeating-linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.18) 0,
+      rgba(255, 255, 255, 0.18) 16px,
+      rgba(228, 211, 177, 0.12) 16px,
+      rgba(228, 211, 177, 0.12) 32px
+    );
+}
+
+.glass-card {
+  backdrop-filter: blur(16px);
+}
+
+.gold-ring {
+  box-shadow: 0 0 0 1px rgba(175, 135, 64, 0.14), 0 22px 52px rgba(70, 48, 18, 0.08);
+}
+
+.dashboard-grid {
+  display: grid;
+  gap: 1.25rem;
+}
+
+@media (min-width: 1024px) {
+  .dashboard-grid {
+    grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
+    align-items: start;
+  }
+}
