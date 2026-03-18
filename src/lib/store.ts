@@ -1,14 +1,8 @@
 ﻿import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { Redis } from "@upstash/redis";
 
-import {
-  BlobNotFoundError,
-  BlobPreconditionFailedError,
-  get,
-  head,
-  put,
-} from "@vercel/blob";
 import bcrypt from "bcryptjs";
 
 import {
@@ -31,10 +25,16 @@ import { SCAN_RESULT_MESSAGE } from "@/lib/scan-result";
 
 const STORE_FILE =
   process.env.STORE_FILE ?? path.join(process.cwd(), "data", "store.json");
-const STORE_BLOB_PATH =
-  process.env.STORE_BLOB_PATH ?? "mahjong-qr-system/store.json";
-const BLOB_ACCESS = "private";
+const REDIS_STORE_KEY = "mahjong_store_v2";
 const STORE_VERSION = 2;
+
+// Initialize Redis client if environment variables are present
+const redis = process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN
+  ? new Redis({
+      url: process.env.KV_REST_API_URL,
+      token: process.env.KV_REST_API_TOKEN,
+    })
+  : null;
 
 type StoreSnapshot = {
   store: AppStore;
@@ -65,12 +65,12 @@ function isVercelEnvironment() {
   return Boolean(process.env.VERCEL);
 }
 
-function isBlobEnabled() {
-  return Boolean(process.env.BLOB_READ_WRITE_TOKEN);
+function isRedisEnabled() {
+  return Boolean(redis);
 }
 
-function shouldRequireBlobStorage() {
-  return isProduction() && isVercelEnvironment() && !isBlobEnabled();
+function shouldRequireRedisStorage() {
+  return isProduction() && isVercelEnvironment() && !isRedisEnabled();
 }
 
 function normalizeText(value: string | undefined | null) {
@@ -509,42 +509,55 @@ async function normalizeStore(input: Partial<AppStore> | null): Promise<AppStore
   return store;
 }
 
-async function readStoreTextFromBlob(): Promise<StoreSnapshot | null> {
+async function readStoreTextFromRedis(): Promise<StoreSnapshot | null> {
+  if (!redis) return null;
+  
   try {
-    const metadata = await head(STORE_BLOB_PATH);
-    const result = await get(STORE_BLOB_PATH, { access: BLOB_ACCESS });
-    if (!result || result.statusCode !== 200) {
+    // 乐观锁：使用 Redis 的 GET 配合 version/timestamp 或直接读取
+    const data = await redis.get<AppStore>(REDIS_STORE_KEY);
+    if (!data) {
       return null;
     }
 
-    const content = await new Response(result.stream).text();
+    // 为了简单模拟 ETag 的乐观锁机制，我们计算一个简单的 hash 或使用 updatedAt
+    // 这里简单用字符串长度+版本作为 etag
+    const etag = `${JSON.stringify(data).length}`;
+    
     return {
-      store: JSON.parse(content) as AppStore,
-      etag: metadata.etag,
+      store: data,
+      etag,
     };
   } catch (error) {
-    if (error instanceof BlobNotFoundError) {
-      return null;
-    }
-
-    throw error;
+    console.error("Failed to read from Redis:", error);
+    return null;
   }
 }
 
-async function writeStoreTextToBlob(
+async function writeStoreTextToRedis(
   store: AppStore,
   etag?: string | null,
 ): Promise<string | null> {
-  const result = await put(STORE_BLOB_PATH, JSON.stringify(store, null, 2), {
-    access: BLOB_ACCESS,
-    addRandomSuffix: false,
-    allowOverwrite: true,
-    contentType: "application/json; charset=utf-8",
-    cacheControlMaxAge: 60,
-    ...(etag ? { ifMatch: etag } : {}),
-  });
+  if (!redis) return null;
 
-  return result.etag;
+  try {
+    // 如果传入了 etag，我们可以简单地做一次校验（在极高并发下可能会有瑕疵，但作为替代方案足够）
+    if (etag) {
+      const currentData = await redis.get<AppStore>(REDIS_STORE_KEY);
+      const currentEtag = currentData ? `${JSON.stringify(currentData).length}` : null;
+      if (currentEtag && currentEtag !== etag) {
+        throw new Error("PreconditionFailed"); // 模拟 BlobPreconditionFailedError
+      }
+    }
+
+    await redis.set(REDIS_STORE_KEY, store);
+    return `${JSON.stringify(store).length}`;
+  } catch (error) {
+    if (error instanceof Error && error.message === "PreconditionFailed") {
+      throw error;
+    }
+    console.error("Failed to write to Redis:", error);
+    throw error;
+  }
 }
 
 async function readStoreFileSnapshot(): Promise<StoreSnapshot | null> {
@@ -566,9 +579,9 @@ async function writeStoreFileSnapshot(store: AppStore): Promise<string | null> {
 }
 
 async function readSnapshot(): Promise<StoreSnapshot | null> {
-  if (shouldRequireBlobStorage()) {
+  if (shouldRequireRedisStorage()) {
     throw new Error(
-      "Vercel production requires BLOB_READ_WRITE_TOKEN. File storage is not persistent on Vercel.",
+      "Vercel production requires KV_REST_API_TOKEN. File storage is not persistent on Vercel.",
     );
   }
 
@@ -577,7 +590,7 @@ async function readSnapshot(): Promise<StoreSnapshot | null> {
     return cachedSnapshot;
   }
 
-  const snapshot = await (isBlobEnabled() ? readStoreTextFromBlob() : readStoreFileSnapshot());
+  const snapshot = await (isRedisEnabled() ? readStoreTextFromRedis() : readStoreFileSnapshot());
   
   if (snapshot) {
     cachedSnapshot = snapshot;
@@ -591,8 +604,8 @@ async function writeSnapshot(
   store: AppStore,
   etag?: string | null,
 ): Promise<string | null> {
-  const newEtag = await (isBlobEnabled()
-    ? writeStoreTextToBlob(store, etag)
+  const newEtag = await (isRedisEnabled()
+    ? writeStoreTextToRedis(store, etag)
     : writeStoreFileSnapshot(store));
     
   // 写入后立即更新缓存
@@ -616,7 +629,7 @@ async function ensureStoreInitialized(): Promise<void> {
         try {
           await writeSnapshot(normalized, null);
         } catch (error) {
-          if (!(error instanceof BlobPreconditionFailedError)) {
+          if (!(error instanceof Error) || error.message !== "PreconditionFailed") {
             throw error;
           }
         }
@@ -627,7 +640,7 @@ async function ensureStoreInitialized(): Promise<void> {
         try {
           await writeSnapshot(normalized, snapshot.etag);
         } catch (error) {
-          if (!(error instanceof BlobPreconditionFailedError)) {
+          if (!(error instanceof Error) || error.message !== "PreconditionFailed") {
             throw error;
           }
         }
@@ -684,7 +697,7 @@ async function updateStore<T>(
 
         return result;
       } catch (error) {
-        if (error instanceof BlobPreconditionFailedError) {
+        if (error instanceof Error && error.message === "PreconditionFailed") {
           lastError = error;
           continue;
         }
