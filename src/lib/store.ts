@@ -44,6 +44,11 @@ type StoreSnapshot = {
 let initPromise: Promise<void> | null = null;
 let writeQueue = Promise.resolve();
 
+// 内存缓存相关变量
+let cachedSnapshot: StoreSnapshot | null = null;
+let lastCacheTime = 0;
+const CACHE_TTL_MS = 5 * 1000; // 5秒缓存，减少高频读取
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -385,6 +390,83 @@ function expireRoundsInStore(store: AppStore) {
   return changed;
 }
 
+function cleanupOldDataInStore(store: AppStore) {
+  let changed = false;
+  const now = new Date();
+  
+  // 保留最近 7 天的记录，或者保留最近 5000 条记录
+  const DAYS_TO_KEEP = 7;
+  const MAX_EVENTS_TO_KEEP = 5000;
+  
+  const cutoffDate = new Date(now.getTime() - DAYS_TO_KEEP * 24 * 60 * 60 * 1000);
+  
+  // 1. 清理 ScanEvents (扫码日志)
+  if (store.scanEvents.length > 0) {
+    const initialLength = store.scanEvents.length;
+    // 按时间倒序排序 (最新的在前面)
+    const sortedEvents = sortByNewest(store.scanEvents);
+    
+    // 过滤掉超过7天的，并且最多只保留 MAX_EVENTS_TO_KEEP 条
+    const keptEvents = sortedEvents
+      .filter(event => {
+        const scannedAt = parseDateOrNull(event.scannedAt);
+        return scannedAt && scannedAt.getTime() > cutoffDate.getTime();
+      })
+      .slice(0, MAX_EVENTS_TO_KEEP);
+      
+    if (keptEvents.length < initialLength) {
+      store.scanEvents = keptEvents;
+      changed = true;
+    }
+  }
+  
+  // 2. 清理已经结束且超过 7 天的 Rounds (房间轮次)
+  if (store.rounds.length > 0) {
+    const initialLength = store.rounds.length;
+    store.rounds = store.rounds.filter(round => {
+      // 保留开启状态的轮次
+      if (round.status === ROUND_STATUS.OPEN) return true;
+      
+      // 对于已关闭的轮次，如果超过 7 天则删除
+      const endedAt = parseDateOrNull(round.endedAt) || parseDateOrNull(round.updatedAt);
+      return endedAt && endedAt.getTime() > cutoffDate.getTime();
+    });
+    
+    if (store.rounds.length < initialLength) {
+      changed = true;
+    }
+  }
+
+  // 3. 清理 RoundParticipants (参局记录)，只保留还在 rounds 列表中的
+  if (store.roundParticipants.length > 0) {
+    const initialLength = store.roundParticipants.length;
+    const validRoundIds = new Set(store.rounds.map(r => r.id));
+    
+    store.roundParticipants = store.roundParticipants.filter(p => validRoundIds.has(p.roundId));
+    
+    if (store.roundParticipants.length < initialLength) {
+      changed = true;
+    }
+  }
+
+  // 4. 清理无用的 Visitors (如果没有参与任何还在的 round，且最近没有扫码记录)
+  if (store.visitors.length > 0) {
+    const initialLength = store.visitors.length;
+    const activeVisitorIds = new Set([
+      ...store.roundParticipants.map(p => p.visitorId),
+      ...store.scanEvents.map(e => e.visitorId).filter(Boolean)
+    ]);
+    
+    store.visitors = store.visitors.filter(v => activeVisitorIds.has(v.id));
+    
+    if (store.visitors.length < initialLength) {
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
 async function normalizeStore(input: Partial<AppStore> | null): Promise<AppStore> {
   const timestamp = nowIso();
   const adminUsers = await buildDefaultUsers(
@@ -423,6 +505,7 @@ async function normalizeStore(input: Partial<AppStore> | null): Promise<AppStore
   };
 
   expireRoundsInStore(store);
+  cleanupOldDataInStore(store);
   return store;
 }
 
@@ -489,16 +572,34 @@ async function readSnapshot(): Promise<StoreSnapshot | null> {
     );
   }
 
-  return isBlobEnabled() ? readStoreTextFromBlob() : readStoreFileSnapshot();
+  const now = Date.now();
+  if (cachedSnapshot && (now - lastCacheTime < CACHE_TTL_MS)) {
+    return cachedSnapshot;
+  }
+
+  const snapshot = await (isBlobEnabled() ? readStoreTextFromBlob() : readStoreFileSnapshot());
+  
+  if (snapshot) {
+    cachedSnapshot = snapshot;
+    lastCacheTime = Date.now();
+  }
+
+  return snapshot;
 }
 
 async function writeSnapshot(
   store: AppStore,
   etag?: string | null,
 ): Promise<string | null> {
-  return isBlobEnabled()
+  const newEtag = await (isBlobEnabled()
     ? writeStoreTextToBlob(store, etag)
-    : writeStoreFileSnapshot(store);
+    : writeStoreFileSnapshot(store));
+    
+  // 写入后立即更新缓存
+  cachedSnapshot = { store, etag: newEtag };
+  lastCacheTime = Date.now();
+  
+  return newEtag;
 }
 
 function isSameStore(a: AppStore, b: AppStore) {
