@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { FormEvent, useMemo, useState } from "react";
 
@@ -36,8 +36,6 @@ function formatDateTime(value: string) {
 
 export function EntryForm({ rooms, campaignName }: EntryFormProps) {
   const [roomId, setRoomId] = useState<string>(rooms[0]?.id ?? "");
-  const [displayName, setDisplayName] = useState("");
-  const [phoneLast4, setPhoneLast4] = useState("");
   const [passcode, setPasscode] = useState("");
   const [loading, setLoading] = useState(false);
   const [submitState, setSubmitState] = useState<SubmitState>({
@@ -69,8 +67,6 @@ export function EntryForm({ rooms, campaignName }: EntryFormProps) {
         },
         body: JSON.stringify({
           roomId,
-          displayName,
-          phoneLast4,
           passcode,
         }),
       });
@@ -116,7 +112,7 @@ export function EntryForm({ rooms, campaignName }: EntryFormProps) {
             {campaignName}
           </h1>
           <p className="mt-3 max-w-2xl text-sm leading-7 text-muted">
-            请选择房间，并输入姓名、手机号后 4 位和本局口令。验证通过后会自动跳转到表单页。
+            请选择房间并输入本局口令。验证通过后会自动跳转到活动表单页。
           </p>
         </div>
 
@@ -134,7 +130,7 @@ export function EntryForm({ rooms, campaignName }: EntryFormProps) {
       </div>
 
       <div className="mt-8 grid gap-4 md:grid-cols-2">
-        <label className="grid gap-2 md:col-span-2">
+        <label className="grid gap-2">
           <span className="text-sm font-medium text-foreground">房间</span>
           <select
             className="box-border w-full rounded-2xl border border-border bg-white/90 px-4 py-3 outline-none ring-[#af8740]/20 transition focus:ring-4"
@@ -154,33 +150,6 @@ export function EntryForm({ rooms, campaignName }: EntryFormProps) {
         </label>
 
         <label className="grid gap-2">
-          <span className="text-sm font-medium text-foreground">姓名</span>
-          <input
-            className="box-border w-full rounded-2xl border border-border bg-white/90 px-4 py-3 outline-none ring-[#af8740]/20 transition focus:ring-4"
-            value={displayName}
-            onChange={(event) => setDisplayName(event.target.value)}
-            placeholder="例如：张三"
-            required
-            maxLength={24}
-          />
-        </label>
-
-        <label className="grid gap-2">
-          <span className="text-sm font-medium text-foreground">手机号后 4 位</span>
-          <input
-            className="box-border w-full rounded-2xl border border-border bg-white/90 px-4 py-3 font-mono outline-none ring-[#af8740]/20 transition focus:ring-4"
-            value={phoneLast4}
-            onChange={(event) =>
-              setPhoneLast4(event.target.value.replace(/\D/g, "").slice(0, 4))
-            }
-            placeholder="1234"
-            inputMode="numeric"
-            pattern="\d{4}"
-            required
-          />
-        </label>
-
-        <label className="grid gap-2 md:col-span-2">
           <span className="text-sm font-medium text-foreground">本局口令</span>
           <input
             className="box-border w-full rounded-2xl border border-border bg-white/90 px-4 py-3 font-mono tracking-[0.35em] outline-none ring-[#af8740]/20 transition focus:ring-4"

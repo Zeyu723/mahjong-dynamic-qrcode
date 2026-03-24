@@ -1,15 +1,14 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { randomUUID } from "crypto";
 
 import { SCAN_RESULT } from "@/lib/domain";
 import { getRequestMeta } from "@/lib/request-meta";
-import { makeVisitorFingerprint, normalizeDisplayName } from "@/lib/security";
+import { makeVisitorFingerprint } from "@/lib/security";
 import { submitEntry } from "@/lib/store";
 
 const entrySchema = z.object({
   roomId: z.string().min(1),
-  displayName: z.string().trim().min(1).max(24),
-  phoneLast4: z.string().regex(/^\d{4}$/),
   passcode: z.string().trim().min(4).max(8),
 });
 
@@ -29,13 +28,17 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const displayName = normalizeDisplayName(parsed.data.displayName);
+  // Generate anonymous visitor identity since user info is now collected in external form
+  const anonymousId = randomUUID().slice(0, 8);
+  const displayName = `访客_${anonymousId}`;
+  const phoneLast4 = "0000";
+
   const result = await submitEntry({
     roomId: parsed.data.roomId,
     displayName,
-    phoneLast4: parsed.data.phoneLast4,
+    phoneLast4,
     passcode: parsed.data.passcode.trim(),
-    fingerprint: makeVisitorFingerprint(displayName, parsed.data.phoneLast4),
+    fingerprint: makeVisitorFingerprint(displayName, phoneLast4),
     ipHash,
     ua,
   });
